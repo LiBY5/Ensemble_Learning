@@ -1,4 +1,4 @@
-"""投票集成在不同数据集上的表现"""
+"投票集成在不同数据集上的表现"
 
 import numpy as np  # 导入numpy库，用于数值计算
 import matplotlib.pyplot as plt  # 导入matplotlib库，用于数据可视化
