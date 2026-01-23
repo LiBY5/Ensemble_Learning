@@ -11,7 +11,7 @@ import os  # 导入os模块，用于操作系统相关功能（如创建目录�
 from models.base import get_diverse_classifiers  # 导入获取多种基分类器的函数
 from models.ensemble import VotingEnsemble, WeightedVotingEnsemble  # 导入投票集成和加权投票集成类
 
-# 方法：设置字体为系统自带的中文字体
+#设置字体为系统自带的中文字体
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'KaiTi', 'FangSong']  # 设置中文字体
 # 解决负号显示问题
 plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示为方块的问题
