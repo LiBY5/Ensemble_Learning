@@ -125,7 +125,7 @@ def run_experiment_on_dataset(dataset_name, voting_method='hard',
     }
 
 
-def visualize_results(all_results, save_dir='C:/Users/l/Desktop/L/python/ensemble_learning/results/figures'):
+def visualize_results(all_results, save_dir='../results/figures'):
     """可视化所有实验结果"""
 
     # 确保保存目录存在
