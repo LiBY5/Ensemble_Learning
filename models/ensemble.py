@@ -3,7 +3,7 @@
 import numpy as np  # 导入NumPy库，用于数值计算
 from typing import List, Optional, Union  # 导入类型注解相关的模块
 from collections import Counter  # 导入Counter类，用于计数
-from models.base import BaseModel  # 从自定义模块导入基类
+from models.base1 import BaseModel  # 从自定义模块导入基类
 
 
 class VotingEnsemble(BaseModel):
@@ -214,7 +214,7 @@ class WeightedVotingEnsemble(VotingEnsemble):
 def evaluate_ensemble_performance(X_train, y_train, X_test, y_test,
                                 voting='hard', random_state=42):
     """评估集成性能的完整流程"""  # 函数文档字符串
-    from models.base import get_diverse_classifiers  # 导入获取多样化分类器的函数
+    from models.base1 import get_diverse_classifiers  # 导入获取多样化分类器的函数
 
     print("=" * 60)  # 打印分隔线
     print("集成学习性能评估")  # 打印标题
@@ -268,7 +268,7 @@ def evaluate_ensemble_performance(X_train, y_train, X_test, y_test,
 if __name__ == "__main__":  # 如果是直接运行此脚本
     from sklearn.datasets import load_iris  # 导入鸢尾花数据集
     from sklearn.model_selection import train_test_split  # 导入数据集划分函数
-    from models.base import get_diverse_classifiers  # 导入获取多样化分类器的函数
+    from models.base1 import get_diverse_classifiers  # 导入获取多样化分类器的函数
 
     # 加载数据
     data = load_iris()  # 加载鸢尾花数据集

@@ -8,7 +8,7 @@ import json  # 导入json模块，用于保存和加载JSON格式数据
 import os  # 导入os模块，用于操作系统相关功能（如创建目录）
 
 # 从自定义模块导入模型
-from models.base import get_diverse_classifiers  # 导入获取多种基分类器的函数
+from models.base1 import get_diverse_classifiers  # 导入获取多种基分类器的函数
 from models.ensemble import VotingEnsemble, WeightedVotingEnsemble  # 导入投票集成和加权投票集成类
 
 #设置字体为系统自带的中文字体
@@ -265,8 +265,8 @@ def main():
     """主函数：运行所有实验"""
 
     # 确保目录存在
-    os.makedirs('C:/Users/l/Desktop/L/python/ensemble_learning/results/figures', exist_ok=True)  # 创建图表保存目录
-    os.makedirs('C:/Users/l/Desktop/L/python/ensemble_learning/results/logs', exist_ok=True)  # 创建日志保存目录
+    os.makedirs('../results/figures', exist_ok=True)  # 创建图表保存目录
+    os.makedirs('../results/logs', exist_ok=True)  # 创建日志保存目录
 
     # 运行实验的数据集
     datasets = ['iris', 'breast_cancer', 'wine', 'digits']  # 数据集列表
@@ -306,7 +306,7 @@ def main():
             method_results[dataset] = all_results[dataset][method]  # 收集该方法的结果
 
         # 保存详细结果
-        with open(f'C:/Users/l/Desktop/L/python/ensemble_learning/results/logs/day1_{method}_voting_results.json', 'w') as f:
+        with open(f'../results/logs/day1_{method}_voting_results.json', 'w') as f:
             json.dump(method_results, f, indent=2, ensure_ascii=False)  # 保存为JSON文件
 
     # 使用软投票的结果进行可视化
@@ -334,14 +334,14 @@ def main():
             print(f"    加权集成: {data['weighted_ensemble_accuracy']:.4f} (提升: {data['improvement_weighted']:+.2f}%)")  # 打印加权集成结果
 
     # 保存所有结果
-    with open('C:/Users/l/Desktop/L/python/ensemble_learning/results/logs/day1_all_experiment_results.json', 'w') as f:
+    with open('../results/logs/day1_all_experiment_results.json', 'w') as f:
         json.dump(all_results, f, indent=2, ensure_ascii=False)  # 保存所有结果为JSON文件
 
     # 打印保存信息
     print(f"\n所有实验完成！结果已保存到:")
-    print(f"  - C:/Users/l/Desktop/L/python/ensemble_learning/results/logs/day1_all_experiment_results.json")
-    print(f"  - C:/Users/l/Desktop/L/python/ensemble_learning/results/figures/day1_voting_results.png")
-    print(f"  - C:/Users/l/Desktop/L/python/ensemble_learning/results/figures/day1_summary_results.png")
+    print(f"  - ../results/logs/day1_all_experiment_results.json")
+    print(f"  - ../results/figures/day1_voting_results.png")
+    print(f"  - ../results/figures/day1_summary_results.png")
 
 
 if __name__ == "__main__":
