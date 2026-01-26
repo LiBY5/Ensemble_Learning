@@ -1,9 +1,10 @@
 """基础模型类 - models/base.py"""
 import numpy as np
 from abc import ABC, abstractmethod
+from sklearn.base import BaseEstimator, ClassifierMixin
 
 
-class BaseClassifier(ABC):
+class BaseClassifier(BaseEstimator, ClassifierMixin, ABC):
     """基础分类器抽象基类"""
 
     def __init__(self, name="BaseClassifier"):
