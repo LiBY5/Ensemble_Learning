@@ -287,7 +287,7 @@ if __name__ == "__main__":
                 return super(NumpyEncoder, self).default(obj)
 
 
-    with open('results/day2_comparison_results.json', 'w') as f:
+    with open('../results/logs/day2_comparison_results.json', 'w') as f:
         json.dump(all_results, f, indent=2, cls=NumpyEncoder)
 
     print("\n" + "=" * 60)
