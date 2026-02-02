@@ -1,7 +1,6 @@
 """Boosting算法实现"""
-
 import numpy as np
-from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from copy import deepcopy
@@ -17,12 +16,12 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
                  algorithm='SAMME',
                  random_state=None):
         """
-        参数:
+        参数说明:
         ----------
-        base_estimator : 基学习器（默认决策树桩）
+        base_estimator : 基学习器，默认为决策树桩（深度为1的决策树）
         n_estimators : 基学习器数量
-        learning_rate : 学习率，收缩每个基学习器的贡献
-        algorithm : 'SAMME' 或 'SAMME.R'
+        learning_rate : 学习率，控制每个基学习器的贡献
+        algorithm : 'SAMME' 或 'SAMME.R'，多分类算法
         random_state : 随机种子
         """
         self.base_estimator = base_estimator
@@ -35,39 +34,33 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
         if self.base_estimator is None:
             self.base_estimator = DecisionTreeClassifier(max_depth=1)
 
+        # 设置随机种子
         if random_state is not None:
             np.random.seed(random_state)
 
-        # 存储训练结果的属性
-        self.estimators_ = []
-        self.estimator_weights_ = np.zeros(self.n_estimators)
-        self.estimator_errors_ = np.zeros(self.n_estimators)
-        self.classes_ = None
-
-    def _check_params(self):
-        """检查参数"""
-        if self.learning_rate <= 0:
-            raise ValueError("learning_rate必须大于0")
-        if self.n_estimators <= 0:
-            raise ValueError("n_estimators必须大于0")
+        # 初始化存储结构
+        self.estimators_ = []  # 存储所有基学习器
+        self.estimator_weights_ = np.zeros(self.n_estimators)  # 基学习器权重
+        self.estimator_errors_ = np.zeros(self.n_estimators)  # 每个基学习器的错误率
+        self.classes_ = None  # 存储类别标签
 
     def fit(self, X, y, sample_weight=None):
         """训练AdaBoost模型"""
-        # 检查输入
+        # 检查输入数据的有效性
         X, y = check_X_y(X, y)
         n_samples, n_features = X.shape
 
-        # 初始化
+        # 获取所有类别
         self.classes_ = np.unique(y)
         n_classes = len(self.classes_)
 
-        # 将标签转换为{-1, 1}或one-hot编码
+        # 将标签转换为适合AdaBoost的形式
         if n_classes == 2:
-            # 二分类：转换为{-1, 1}
+            # 二分类：将标签转换为{-1, 1}
             y_coded = np.where(y == self.classes_[0], -1, 1)
             self._binary = True
         else:
-            # 多分类：使用SAMME算法
+            # 多分类：使用one-hot编码
             y_coded = np.eye(n_classes)[y]
             self._binary = False
 
@@ -77,13 +70,15 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
         else:
             sample_weight = np.array(sample_weight) / np.sum(sample_weight)
 
+        # 清空之前的训练结果
         self.estimators_ = []
         self.estimator_weights_ = np.zeros(self.n_estimators)
         self.estimator_errors_ = np.zeros(self.n_estimators)
 
-        print(f"开始训练AdaBoost，共{self.n_estimators}轮...")
-
+        # 主训练循环
         for t in range(self.n_estimators):
+            print(f"\n第 {t + 1}/{self.n_estimators} 轮训练...")
+
             # 1. 使用当前权重训练基学习器
             estimator = self._make_estimator()
 
@@ -91,10 +86,9 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
                 estimator.fit(X, y_coded, sample_weight=sample_weight)
                 y_pred = estimator.predict(X)
             else:
-                # 多分类
                 estimator.fit(X, y, sample_weight=sample_weight)
                 y_pred = estimator.predict(X)
-                # 转换为类别索引
+                # 转换为one-hot形式
                 y_pred_coded = np.eye(n_classes)[np.searchsorted(self.classes_, y_pred)]
 
             # 2. 计算加权错误率
@@ -108,23 +102,26 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
                 else:  # SAMME.R
                     # 使用概率估计
                     y_proba = estimator.predict_proba(X)
-                    y_proba = np.clip(y_proba, 1e-15, 1 - 1e-15)  # 避免log(0)
+                    y_proba = np.clip(y_proba, 1e-15, 1 - 1e-15)
 
                     # 计算加权对数概率
                     log_proba = np.log(y_proba)
                     inner_product = np.sum(y_coded * log_proba, axis=1)
                     estimator_error = np.dot(sample_weight, 1 - inner_product)
 
-            # 如果错误率为0或≥0.5，提前停止
+            print(f"  加权错误率: {estimator_error:.4f}")
+
+            # 如果错误率≥0.5，提前停止
             if estimator_error >= 0.5:
-                print(f"第{t+1}轮错误率≥0.5 ({estimator_error:.4f})，提前停止")
+                print(f"  错误率≥0.5，提前停止训练")
                 self.n_estimators = t
                 self.estimator_weights_ = self.estimator_weights_[:t]
                 self.estimator_errors_ = self.estimator_errors_[:t]
                 break
 
+            # 如果错误率为0，也提前停止
             if estimator_error <= 0:
-                print(f"第{t+1}轮错误率为0，提前停止")
+                print(f"  错误率为0，完美分类，提前停止")
                 self.estimator_weights_[t] = 1.0
                 self.estimator_errors_[t] = 0
                 self.estimators_.append(estimator)
@@ -141,8 +138,8 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
                 else:
                     # 多分类SAMME
                     estimator_weight = self.learning_rate * (
-                        np.log((1 - estimator_error) / estimator_error) +
-                        np.log(n_classes - 1)
+                            0.5 * np.log((1 - estimator_error) / estimator_error) +
+                            np.log(n_classes - 1)
                     )
             else:  # SAMME.R
                 # SAMME.R使用不同的权重计算方式
@@ -152,10 +149,12 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
             self.estimator_errors_[t] = estimator_error
             self.estimators_.append(estimator)
 
+            print(f"  基学习器权重: {estimator_weight:.4f}")
+
             # 4. 更新样本权重
             if self.algorithm == 'SAMME' or self._binary:
                 if self._binary:
-                    # 二分类更新
+                    # 二分类更新公式
                     sample_weight *= np.exp(
                         -estimator_weight * y_coded * y_pred
                     )
@@ -175,15 +174,14 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
             # 归一化权重
             sample_weight /= np.sum(sample_weight)
 
-            # 打印进度
-            if (t + 1) % 10 == 0 or t == 0 or t == self.n_estimators - 1:
-                print(f"  第{t+1:3d}轮: 错误率={estimator_error:.4f}, 权重={estimator_weight:.4f}")
+            # 打印权重信息
+            print(f"  样本权重范围: [{sample_weight.min():.6f}, {sample_weight.max():.6f}]")
+            print(f"  平均样本权重: {sample_weight.mean():.6f}")
 
-        print(f"训练完成，实际使用了{self.n_estimators}个基学习器")
         return self
 
     def _make_estimator(self):
-        """创建基学习器实例"""
+        """创建基学习器的深拷贝"""
         return deepcopy(self.base_estimator)
 
     def predict(self, X):
@@ -192,7 +190,7 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
         X = check_array(X)
 
         if self._binary:
-            # 二分类
+            # 二分类：使用决策函数
             pred = self.decision_function(X)
             return np.where(pred > 0, self.classes_[1], self.classes_[0])
         else:
@@ -206,7 +204,7 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
                 if self.algorithm == 'SAMME':
                     y_pred = estimator.predict(X)
                     pred[np.arange(n_samples),
-                        np.searchsorted(self.classes_, y_pred)] += weight
+                    np.searchsorted(self.classes_, y_pred)] += weight
                 else:  # SAMME.R
                     y_proba = estimator.predict_proba(X)
                     pred += weight * y_proba
@@ -240,7 +238,7 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
             for t in range(1, self.n_estimators + 1):
                 pred = np.zeros(n_samples)
                 for estimator, weight in zip(self.estimators_[:t],
-                                            self.estimator_weights_[:t]):
+                                             self.estimator_weights_[:t]):
                     y_pred = estimator.predict(X)
                     pred += weight * y_pred
                 yield np.where(pred > 0, self.classes_[1], self.classes_[0])
@@ -249,11 +247,11 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
             for t in range(1, self.n_estimators + 1):
                 pred = np.zeros((n_samples, n_classes))
                 for estimator, weight in zip(self.estimators_[:t],
-                                            self.estimator_weights_[:t]):
+                                             self.estimator_weights_[:t]):
                     if self.algorithm == 'SAMME':
                         y_pred = estimator.predict(X)
                         pred[np.arange(n_samples),
-                            np.searchsorted(self.classes_, y_pred)] += weight
+                        np.searchsorted(self.classes_, y_pred)] += weight
                     else:  # SAMME.R
                         y_proba = estimator.predict_proba(X)
                         pred += weight * y_proba
@@ -265,116 +263,83 @@ class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
         return np.mean(y_pred == y)
 
 
-class AdaBoostRegressor(BaseEstimator):
+class AdaBoostRegressor(BaseEstimator, RegressorMixin):
     """AdaBoost回归器"""
 
     def __init__(self, base_estimator=None, n_estimators=50,
-                 learning_rate=1.0, loss='square', random_state=None):
-        """
-        参数:
-        ----------
-        base_estimator : 基学习器（默认决策树）
-        n_estimators : 基学习器数量
-        learning_rate : 学习率
-        loss : 损失函数类型，'square'、'linear' 或 'exponential'
-        random_state : 随机种子
-        """
+                 learning_rate=1.0, loss='linear', random_state=None):
         self.base_estimator = base_estimator
         self.n_estimators = n_estimators
         self.learning_rate = learning_rate
-        self.loss = loss
+        self.loss = loss  # 'linear', 'square', 'exponential'
         self.random_state = random_state
 
         if self.base_estimator is None:
+            from sklearn.tree import DecisionTreeRegressor
             self.base_estimator = DecisionTreeRegressor(max_depth=3)
 
         if random_state is not None:
             np.random.seed(random_state)
-
-        self.estimators_ = []
-        self.estimator_weights_ = np.zeros(self.n_estimators)
-        self.estimator_errors_ = np.zeros(self.n_estimators)
-
-    def _make_estimator(self):
-        """创建基学习器实例"""
-        return deepcopy(self.base_estimator)
-
-    def _compute_loss(self, y_true, y_pred):
-        """计算损失向量"""
-        error = y_true - y_pred
-
-        if self.loss == 'square':
-            return error ** 2
-        elif self.loss == 'linear':
-            return np.abs(error)
-        elif self.loss == 'exponential':
-            return 1 - np.exp(-np.abs(error))
-        else:
-            raise ValueError(f"未知损失函数: {self.loss}")
 
     def fit(self, X, y, sample_weight=None):
         """训练AdaBoost回归器"""
         X, y = check_X_y(X, y)
         n_samples = X.shape[0]
 
-        # 初始化样本权重
+        # 初始化
         if sample_weight is None:
             sample_weight = np.ones(n_samples) / n_samples
-        else:
-            sample_weight = np.array(sample_weight) / np.sum(sample_weight)
 
-        # 存储模型和权重
         self.estimators_ = []
         self.estimator_weights_ = np.zeros(self.n_estimators)
         self.estimator_errors_ = np.zeros(self.n_estimators)
 
-        # 初始化预测
+        # 初始预测
         y_pred = np.zeros(n_samples)
 
-        print(f"开始训练AdaBoost回归器，共{self.n_estimators}轮...")
-
         for t in range(self.n_estimators):
-            # 1. 计算残差
-            residual = y - y_pred
+            print(f"\n第 {t + 1}/{self.n_estimators} 轮回归训练...")
 
-            # 2. 训练基学习器拟合残差
-            estimator = self._make_estimator()
-            estimator.fit(X, residual, sample_weight=sample_weight)
+            # 1. 训练基学习器
+            estimator = deepcopy(self.base_estimator)
+            estimator.fit(X, y, sample_weight=sample_weight)
             y_pred_i = estimator.predict(X)
 
-            # 3. 计算加权损失
-            loss_vector = self._compute_loss(y, y_pred + y_pred_i)
-            estimator_error = np.dot(sample_weight, loss_vector)
+            # 2. 计算损失
+            error_vector = y - (y_pred + y_pred_i)
 
-            # 如果误差过大，提前停止
-            if estimator_error >= 1.0 or estimator_error <= 0:
-                print(f"第{t+1}轮误差异常 ({estimator_error:.4f})，提前停止")
-                self.n_estimators = t
-                self.estimator_weights_ = self.estimator_weights_[:t]
-                self.estimator_errors_ = self.estimator_errors_[:t]
-                break
+            if self.loss == 'linear':
+                loss_vector = np.abs(error_vector)
+            elif self.loss == 'square':
+                loss_vector = error_vector ** 2
+            elif self.loss == 'exponential':
+                loss_vector = 1 - np.exp(-np.abs(error_vector))
+
+            # 3. 计算加权平均损失
+            estimator_error = np.dot(sample_weight, loss_vector)
+            self.estimator_errors_[t] = estimator_error
+            print(f"  加权损失: {estimator_error:.4f}")
 
             # 4. 计算基学习器权重
+            if estimator_error >= 1.0:
+                print(f"  损失≥1.0，提前停止")
+                break
+
             estimator_weight = self.learning_rate * np.log(
                 (1 - estimator_error) / estimator_error
-            ) if estimator_error > 0 else 1.0
-
+            )
             self.estimator_weights_[t] = estimator_weight
-            self.estimator_errors_[t] = estimator_error
             self.estimators_.append(estimator)
+
+            print(f"  基学习器权重: {estimator_weight:.4f}")
 
             # 5. 更新样本权重
             sample_weight *= np.exp(estimator_weight * loss_vector)
-            sample_weight /= sample_weight.sum()  # 归一化
+            sample_weight /= sample_weight.sum()
 
             # 6. 更新累计预测
             y_pred += estimator_weight * y_pred_i
 
-            # 打印进度
-            if (t + 1) % 10 == 0 or t == 0 or t == self.n_estimators - 1:
-                print(f"  第{t+1:3d}轮: 误差={estimator_error:.4f}, 权重={estimator_weight:.4f}")
-
-        print(f"回归器训练完成，实际使用了{self.n_estimators}个基学习器")
         return self
 
     def predict(self, X):
@@ -387,9 +352,3 @@ class AdaBoostRegressor(BaseEstimator):
             y_pred += weight * estimator.predict(X)
 
         return y_pred
-
-    def score(self, X, y):
-        """计算R²分数"""
-        from sklearn.metrics import r2_score
-        y_pred = self.predict(X)
-        return r2_score(y, y_pred)
