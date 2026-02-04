@@ -1,795 +1,530 @@
-"""Boosting算法实现"""
-import numpy as np
-from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
-from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
-from copy import deepcopy
+"""Boosting算法实现"""  # 模块文档字符串
+import numpy as np  # 导入numpy数值计算库
+from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin  # 导入scikit-learn基类
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor  # 导入决策树作为基学习器
+from sklearn.utils.validation import check_X_y, check_array, check_is_fitted  # 导入验证工具
+from copy import deepcopy  # 导入深拷贝工具
 
 
 class AdaBoostClassifier(BaseEstimator, ClassifierMixin):
-    """AdaBoost分类器"""
+    """AdaBoost分类器"""  # 类文档字符串
 
     def __init__(self,
-                 base_estimator=None,
-                 n_estimators=50,
-                 learning_rate=1.0,
-                 algorithm='SAMME',
-                 random_state=None):
-        """
-        参数说明:
-        ----------
-        base_estimator : 基学习器，默认为决策树桩（深度为1的决策树）
-        n_estimators : 基学习器数量
-        learning_rate : 学习率，控制每个基学习器的贡献
-        algorithm : 'SAMME' 或 'SAMME.R'，多分类算法
-        random_state : 随机种子
-        """
+                 base_estimator=None,  # 基础学习器，默认使用决策树桩
+                 n_estimators=50,  # 集成器数量（弱学习器数量）
+                 learning_rate=1.0,  # 学习率，控制每个弱学习器的贡献
+                 algorithm='SAMME',  # 算法类型：SAMME或SAMME.R
+                 random_state=None):  # 随机种子
         self.base_estimator = base_estimator
         self.n_estimators = n_estimators
         self.learning_rate = learning_rate
         self.algorithm = algorithm
         self.random_state = random_state
 
-        # 设置默认基学习器
-        if self.base_estimator is None:
-            self.base_estimator = DecisionTreeClassifier(max_depth=1)
+        if self.base_estimator is None:  # 如果没有指定基础学习器
+            self.base_estimator = DecisionTreeClassifier(max_depth=1)  # 使用深度为1的决策树（决策树桩）
 
-        # 设置随机种子
-        if random_state is not None:
-            np.random.seed(random_state)
+        if random_state is not None:  # 如果指定了随机种子
+            np.random.seed(random_state)  # 设置numpy随机种子
 
-        # 初始化存储结构
-        self.estimators_ = []  # 存储所有基学习器
-        self.estimator_weights_ = np.zeros(self.n_estimators)  # 基学习器权重
-        self.estimator_errors_ = np.zeros(self.n_estimators)  # 每个基学习器的错误率
+        self.estimators_ = []  # 存储训练好的弱学习器列表
+        self.estimator_weights_ = np.zeros(self.n_estimators)  # 存储每个弱学习器的权重
+        self.estimator_errors_ = np.zeros(self.n_estimators)  # 存储每个弱学习器的错误率
         self.classes_ = None  # 存储类别标签
 
-    def fit(self, X, y, sample_weight=None):
-        """训练AdaBoost模型"""
-        # 检查输入数据的有效性
-        X, y = check_X_y(X, y)
-        n_samples, n_features = X.shape
+    def fit(self, X, y, sample_weight=None):  # 训练方法，X为特征，y为标签，sample_weight为样本权重
+        X, y = check_X_y(X, y)  # 检查X和y的格式和有效性
+        n_samples, n_features = X.shape  # 获取样本数和特征数
 
-        # 获取所有类别
-        self.classes_ = np.unique(y)
-        n_classes = len(self.classes_)
+        self.classes_ = np.unique(y)  # 获取所有唯一的类别标签
+        n_classes = len(self.classes_)  # 获取类别数量
 
-        # 将标签转换为适合AdaBoost的形式
-        if n_classes == 2:
-            # 二分类：将标签转换为{-1, 1}
-            y_coded = np.where(y == self.classes_[0], -1, 1)
-            self._binary = True
-        else:
-            # 多分类：使用one-hot编码
-            y_coded = np.eye(n_classes)[y]
-            self._binary = False
+        if n_classes == 2:  # 如果是二分类问题
+            y_coded = np.where(y == self.classes_[0], -1, 1)  # 将标签编码为-1和1
+            self._binary = True  # 标记为二分类
+        else:  # 如果是多分类问题
+            y_coded = np.eye(n_classes)[y]  # 使用one-hot编码
+            self._binary = False  # 标记为多分类
 
-        # 初始化样本权重
-        if sample_weight is None:
-            sample_weight = np.ones(n_samples) / n_samples
-        else:
-            sample_weight = np.array(sample_weight) / np.sum(sample_weight)
+        if sample_weight is None:  # 如果没有提供样本权重
+            sample_weight = np.ones(n_samples) / n_samples  # 初始化所有样本权重相同
+        else:  # 如果提供了样本权重
+            sample_weight = np.array(sample_weight) / np.sum(sample_weight)  # 归一化样本权重
 
-        # 清空之前的训练结果
-        self.estimators_ = []
-        self.estimator_weights_ = np.zeros(self.n_estimators)
-        self.estimator_errors_ = np.zeros(self.n_estimators)
+        self.estimators_ = []  # 重置弱学习器列表
+        self.estimator_weights_ = np.zeros(self.n_estimators)  # 重置权重数组
+        self.estimator_errors_ = np.zeros(self.n_estimators)  # 重置错误率数组
 
-        # 主训练循环
-        for t in range(self.n_estimators):
-            print(f"\n第 {t + 1}/{self.n_estimators} 轮训练...")
+        for t in range(self.n_estimators):  # 遍历每个弱学习器
+            print(f"\n第 {t + 1}/{self.n_estimators} 轮训练...")  # 打印训练进度
 
-            # 1. 使用当前权重训练基学习器
-            estimator = self._make_estimator()
+            estimator = self._make_estimator()  # 创建新的弱学习器实例
 
-            if self._binary:
-                estimator.fit(X, y_coded, sample_weight=sample_weight)
-                y_pred = estimator.predict(X)
-            else:
-                estimator.fit(X, y, sample_weight=sample_weight)
-                y_pred = estimator.predict(X)
-                # 转换为one-hot形式
-                y_pred_coded = np.eye(n_classes)[np.searchsorted(self.classes_, y_pred)]
+            if self._binary:  # 如果是二分类
+                estimator.fit(X, y_coded, sample_weight=sample_weight)  # 使用编码后的标签训练
+                y_pred = estimator.predict(X)  # 预测训练集
+            else:  # 如果是多分类
+                estimator.fit(X, y, sample_weight=sample_weight)  # 使用原始标签训练
+                y_pred = estimator.predict(X)  # 预测训练集
+                y_pred_coded = np.eye(n_classes)[np.searchsorted(self.classes_, y_pred)]  # 将预测转换为one-hot编码
 
-            # 2. 计算加权错误率
-            if self._binary:
-                incorrect = (y_pred != y_coded)
-                estimator_error = np.dot(sample_weight, incorrect)
-            else:
-                if self.algorithm == 'SAMME':
-                    incorrect = (y_pred != y)
-                    estimator_error = np.dot(sample_weight, incorrect)
-                else:  # SAMME.R
-                    # 使用概率估计
-                    y_proba = estimator.predict_proba(X)
-                    y_proba = np.clip(y_proba, 1e-15, 1 - 1e-15)
+            if self._binary:  # 如果是二分类
+                incorrect = (y_pred != y_coded)  # 计算哪些样本预测错误
+                estimator_error = np.dot(sample_weight, incorrect)  # 计算加权错误率
+            else:  # 如果是多分类
+                if self.algorithm == 'SAMME':  # 如果使用SAMME算法
+                    incorrect = (y_pred != y)  # 计算哪些样本预测错误
+                    estimator_error = np.dot(sample_weight, incorrect)  # 计算加权错误率
+                else:  # 如果使用SAMME.R算法
+                    y_proba = estimator.predict_proba(X)  # 获取预测概率
+                    y_proba = np.clip(y_proba, 1e-15, 1 - 1e-15)  # 裁剪概率值避免数值问题
+                    log_proba = np.log(y_proba)  # 计算对数概率
+                    inner_product = np.sum(y_coded * log_proba, axis=1)  # 计算内积
+                    estimator_error = np.dot(sample_weight, 1 - inner_product)  # 计算加权错误率
 
-                    # 计算加权对数概率
-                    log_proba = np.log(y_proba)
-                    inner_product = np.sum(y_coded * log_proba, axis=1)
-                    estimator_error = np.dot(sample_weight, 1 - inner_product)
+            print(f"  加权错误率: {estimator_error:.4f}")  # 打印错误率
 
-            print(f"  加权错误率: {estimator_error:.4f}")
+            if estimator_error >= 0.5:  # 如果错误率大于等于0.5（弱学习器比随机猜测还差）
+                print(f"  错误率≥0.5，提前停止训练")  # 打印停止信息
+                self.n_estimators = t  # 更新弱学习器数量
+                self.estimator_weights_ = self.estimator_weights_[:t]  # 截断权重数组
+                self.estimator_errors_ = self.estimator_errors_[:t]  # 截断错误率数组
+                break  # 停止训练
 
-            # 如果错误率≥0.5，提前停止
-            if estimator_error >= 0.5:
-                print(f"  错误率≥0.5，提前停止训练")
-                self.n_estimators = t
-                self.estimator_weights_ = self.estimator_weights_[:t]
-                self.estimator_errors_ = self.estimator_errors_[:t]
-                break
+            if estimator_error <= 0:  # 如果错误率为0（完美分类）
+                print(f"  错误率为0，完美分类，提前停止")  # 打印停止信息
+                self.estimator_weights_[t] = 1.0  # 设置权重为1
+                self.estimator_errors_[t] = 0  # 设置错误率为0
+                self.estimators_.append(estimator)  # 将学习器添加到列表
+                self.n_estimators = t + 1  # 更新弱学习器数量
+                break  # 停止训练
 
-            # 如果错误率为0，也提前停止
-            if estimator_error <= 0:
-                print(f"  错误率为0，完美分类，提前停止")
-                self.estimator_weights_[t] = 1.0
-                self.estimator_errors_[t] = 0
-                self.estimators_.append(estimator)
-                self.n_estimators = t + 1
-                break
-
-            # 3. 计算基学习器权重
-            if self.algorithm == 'SAMME' or self._binary:
-                if self._binary:
-                    # 二分类
+            if self.algorithm == 'SAMME' or self._binary:  # 如果是SAMME算法或二分类
+                if self._binary:  # 如果是二分类
                     estimator_weight = self.learning_rate * 0.5 * np.log(
-                        (1 - estimator_error) / estimator_error
+                        (1 - estimator_error) / estimator_error  # 计算弱学习器权重（二分类公式）
                     )
-                else:
-                    # 多分类SAMME
+                else:  # 如果是多分类SAMME
                     estimator_weight = self.learning_rate * (
-                            0.5 * np.log((1 - estimator_error) / estimator_error) +
-                            np.log(n_classes - 1)
+                            0.5 * np.log((1 - estimator_error) / estimator_error) +  # 计算弱学习器权重（多分类公式）
+                            np.log(n_classes - 1)  # 多分类调整项
                     )
-            else:  # SAMME.R
-                # SAMME.R使用不同的权重计算方式
-                estimator_weight = 1.0
+            else:  # 如果是SAMME.R算法
+                estimator_weight = 1.0  # SAMME.R中权重固定为1
 
-            self.estimator_weights_[t] = estimator_weight
-            self.estimator_errors_[t] = estimator_error
-            self.estimators_.append(estimator)
+            self.estimator_weights_[t] = estimator_weight  # 保存权重
+            self.estimator_errors_[t] = estimator_error  # 保存错误率
+            self.estimators_.append(estimator)  # 将学习器添加到列表
 
-            print(f"  基学习器权重: {estimator_weight:.4f}")
+            print(f"  基学习器权重: {estimator_weight:.4f}")  # 打印权重
 
-            # 4. 更新样本权重
-            if self.algorithm == 'SAMME' or self._binary:
-                if self._binary:
-                    # 二分类更新公式
+            if self.algorithm == 'SAMME' or self._binary:  # 如果是SAMME算法或二分类
+                if self._binary:  # 如果是二分类
                     sample_weight *= np.exp(
-                        -estimator_weight * y_coded * y_pred
+                        -estimator_weight * y_coded * y_pred  # 更新样本权重（二分类公式）
                     )
-                else:
-                    # 多分类SAMME更新
-                    incorrect = (y_pred != y)
+                else:  # 如果是多分类SAMME
+                    incorrect = (y_pred != y)  # 计算错误样本
                     sample_weight *= np.exp(
-                        estimator_weight * incorrect
+                        estimator_weight * incorrect  # 更新样本权重（多分类公式）
                     )
-            else:  # SAMME.R
-                # 使用概率更新权重
+            else:  # 如果是SAMME.R算法
                 sample_weight *= np.exp(
-                    -((n_classes - 1) / n_classes) *
+                    -((n_classes - 1) / n_classes) *  # 更新样本权重（SAMME.R公式）
                     np.sum(y_coded * np.log(y_proba), axis=1)
                 )
 
-            # 归一化权重
-            sample_weight /= np.sum(sample_weight)
+            sample_weight /= np.sum(sample_weight)  # 归一化样本权重
 
-            # 打印权重信息
-            print(f"  样本权重范围: [{sample_weight.min():.6f}, {sample_weight.max():.6f}]")
-            print(f"  平均样本权重: {sample_weight.mean():.6f}")
+            print(f"  样本权重范围: [{sample_weight.min():.6f}, {sample_weight.max():.6f}]")  # 打印权重范围
+            print(f"  平均样本权重: {sample_weight.mean():.6f}")  # 打印平均权重
 
-        return self
+        return self  # 返回self以支持链式调用
 
-    def _make_estimator(self):
-        """创建基学习器的深拷贝"""
-        return deepcopy(self.base_estimator)
+    def _make_estimator(self):  # 创建弱学习器实例的辅助方法
+        return deepcopy(self.base_estimator)  # 深拷贝基础学习器模板
 
-    def predict(self, X):
-        """预测类别"""
-        check_is_fitted(self)
-        X = check_array(X)
+    def predict(self, X):  # 预测方法
+        check_is_fitted(self)  # 检查模型是否已训练
+        X = check_array(X)  # 检查输入X的有效性
 
-        if self._binary:
-            # 二分类：使用决策函数
-            pred = self.decision_function(X)
-            return np.where(pred > 0, self.classes_[1], self.classes_[0])
-        else:
-            # 多分类
-            n_samples = X.shape[0]
-            n_classes = len(self.classes_)
+        if self._binary:  # 如果是二分类
+            pred = self.decision_function(X)  # 获取决策函数值
+            return np.where(pred > 0, self.classes_[1], self.classes_[0])  # 根据决策函数值预测类别
+        else:  # 如果是多分类
+            n_samples = X.shape[0]  # 获取样本数
+            n_classes = len(self.classes_)  # 获取类别数
 
-            pred = np.zeros((n_samples, n_classes))
+            pred = np.zeros((n_samples, n_classes))  # 初始化预测矩阵
 
-            for estimator, weight in zip(self.estimators_, self.estimator_weights_):
-                if self.algorithm == 'SAMME':
-                    y_pred = estimator.predict(X)
+            for estimator, weight in zip(self.estimators_, self.estimator_weights_):  # 遍历所有弱学习器
+                if self.algorithm == 'SAMME':  # 如果是SAMME算法
+                    y_pred = estimator.predict(X)  # 获取预测标签
                     pred[np.arange(n_samples),
-                    np.searchsorted(self.classes_, y_pred)] += weight
-                else:  # SAMME.R
-                    y_proba = estimator.predict_proba(X)
-                    pred += weight * y_proba
+                    np.searchsorted(self.classes_, y_pred)] += weight  # 累加权重到对应类别
+                else:  # 如果是SAMME.R算法
+                    y_proba = estimator.predict_proba(X)  # 获取预测概率
+                    pred += weight * y_proba  # 加权累加概率
 
-            return self.classes_[np.argmax(pred, axis=1)]
+            return self.classes_[np.argmax(pred, axis=1)]  # 返回概率最大的类别
 
-    def decision_function(self, X):
-        """决策函数值（仅二分类）"""
-        if not self._binary:
-            raise ValueError("decision_function仅适用于二分类")
+    def decision_function(self, X):  # 决策函数（仅用于二分类）
+        if not self._binary:  # 如果不是二分类
+            raise ValueError("decision_function仅适用于二分类")  # 抛出错误
 
-        check_is_fitted(self)
-        X = check_array(X)
+        check_is_fitted(self)  # 检查模型是否已训练
+        X = check_array(X)  # 检查输入X的有效性
 
-        pred = np.zeros(X.shape[0])
+        pred = np.zeros(X.shape[0])  # 初始化预测数组
 
-        for estimator, weight in zip(self.estimators_, self.estimator_weights_):
-            y_pred = estimator.predict(X)
-            pred += weight * y_pred
+        for estimator, weight in zip(self.estimators_, self.estimator_weights_):  # 遍历所有弱学习器
+            y_pred = estimator.predict(X)  # 获取预测结果
+            pred += weight * y_pred  # 加权累加
 
-        return pred
+        return pred  # 返回决策函数值
 
-    def staged_predict(self, X):
-        """按阶段预测（返回每个阶段的预测）"""
-        check_is_fitted(self)
-        X = check_array(X)
+    def staged_predict(self, X):  # 阶段预测生成器
+        check_is_fitted(self)  # 检查模型是否已训练
+        X = check_array(X)  # 检查输入X的有效性
 
-        n_samples = X.shape[0]
+        n_samples = X.shape[0]  # 获取样本数
 
-        if self._binary:
-            for t in range(1, self.n_estimators + 1):
-                pred = np.zeros(n_samples)
+        if self._binary:  # 如果是二分类
+            for t in range(1, self.n_estimators + 1):  # 遍历每个阶段
+                pred = np.zeros(n_samples)  # 初始化预测数组
                 for estimator, weight in zip(self.estimators_[:t],
-                                             self.estimator_weights_[:t]):
-                    y_pred = estimator.predict(X)
-                    pred += weight * y_pred
-                yield np.where(pred > 0, self.classes_[1], self.classes_[0])
-        else:
-            n_classes = len(self.classes_)
-            for t in range(1, self.n_estimators + 1):
-                pred = np.zeros((n_samples, n_classes))
+                                             self.estimator_weights_[:t]):  # 遍历前t个学习器
+                    y_pred = estimator.predict(X)  # 获取预测结果
+                    pred += weight * y_pred  # 加权累加
+                yield np.where(pred > 0, self.classes_[1], self.classes_[0])  # 生成预测结果
+        else:  # 如果是多分类
+            n_classes = len(self.classes_)  # 获取类别数
+            for t in range(1, self.n_estimators + 1):  # 遍历每个阶段
+                pred = np.zeros((n_samples, n_classes))  # 初始化预测矩阵
                 for estimator, weight in zip(self.estimators_[:t],
-                                             self.estimator_weights_[:t]):
-                    if self.algorithm == 'SAMME':
-                        y_pred = estimator.predict(X)
+                                             self.estimator_weights_[:t]):  # 遍历前t个学习器
+                    if self.algorithm == 'SAMME':  # 如果是SAMME算法
+                        y_pred = estimator.predict(X)  # 获取预测标签
                         pred[np.arange(n_samples),
-                        np.searchsorted(self.classes_, y_pred)] += weight
-                    else:  # SAMME.R
-                        y_proba = estimator.predict_proba(X)
-                        pred += weight * y_proba
-                yield self.classes_[np.argmax(pred, axis=1)]
+                        np.searchsorted(self.classes_, y_pred)] += weight  # 累加权重
+                    else:  # 如果是SAMME.R算法
+                        y_proba = estimator.predict_proba(X)  # 获取预测概率
+                        pred += weight * y_proba  # 加权累加概率
+                yield self.classes_[np.argmax(pred, axis=1)]  # 生成预测结果
 
-    def score(self, X, y):
-        """计算准确率"""
-        y_pred = self.predict(X)
-        return np.mean(y_pred == y)
+    def score(self, X, y):  # 计算准确率
+        y_pred = self.predict(X)  # 预测
+        return np.mean(y_pred == y)  # 返回准确率
 
 
 class AdaBoostRegressor(BaseEstimator, RegressorMixin):
-    """AdaBoost回归器"""
+    """AdaBoost回归器"""  # 类文档字符串
 
     def __init__(self, base_estimator=None, n_estimators=50,
                  learning_rate=1.0, loss='linear', random_state=None):
         self.base_estimator = base_estimator
         self.n_estimators = n_estimators
         self.learning_rate = learning_rate
-        self.loss = loss  # 'linear', 'square', 'exponential'
+        self.loss = loss
         self.random_state = random_state
 
-        if self.base_estimator is None:
-            from sklearn.tree import DecisionTreeRegressor
-            self.base_estimator = DecisionTreeRegressor(max_depth=3)
+        if self.base_estimator is None:  # 如果没有指定基础学习器
+            self.base_estimator = DecisionTreeRegressor(max_depth=3)  # 使用深度为3的决策树
 
-        if random_state is not None:
-            np.random.seed(random_state)
+        if random_state is not None:  # 如果指定了随机种子
+            np.random.seed(random_state)  # 设置numpy随机种子
 
-    def fit(self, X, y, sample_weight=None):
-        """训练AdaBoost回归器"""
-        X, y = check_X_y(X, y)
-        n_samples = X.shape[0]
+    def fit(self, X, y, sample_weight=None):  # 训练方法
+        X, y = check_X_y(X, y)  # 检查X和y的格式和有效性
+        n_samples = X.shape[0]  # 获取样本数
 
-        # 初始化
-        if sample_weight is None:
-            sample_weight = np.ones(n_samples) / n_samples
+        if sample_weight is None:  # 如果没有提供样本权重
+            sample_weight = np.ones(n_samples) / n_samples  # 初始化所有样本权重相同
 
-        self.estimators_ = []
-        self.estimator_weights_ = np.zeros(self.n_estimators)
-        self.estimator_errors_ = np.zeros(self.n_estimators)
+        self.estimators_ = []  # 存储训练好的弱学习器列表
+        self.estimator_weights_ = np.zeros(self.n_estimators)  # 存储每个弱学习器的权重
+        self.estimator_errors_ = np.zeros(self.n_estimators)  # 存储每个弱学习器的误差
 
-        # 初始预测
-        y_pred = np.zeros(n_samples)
+        y_pred = np.zeros(n_samples)  # 初始化预测值
 
-        for t in range(self.n_estimators):
-            print(f"\n第 {t + 1}/{self.n_estimators} 轮回归训练...")
+        for t in range(self.n_estimators):  # 遍历每个弱学习器
+            print(f"\n第 {t + 1}/{self.n_estimators} 轮回归训练...")  # 打印训练进度
 
-            # 1. 训练基学习器
-            estimator = deepcopy(self.base_estimator)
-            estimator.fit(X, y, sample_weight=sample_weight)
-            y_pred_i = estimator.predict(X)
+            estimator = deepcopy(self.base_estimator)  # 创建新的弱学习器实例
+            estimator.fit(X, y, sample_weight=sample_weight)  # 训练弱学习器
+            y_pred_i = estimator.predict(X)  # 预测训练集
 
-            # 2. 计算损失
-            error_vector = y - (y_pred + y_pred_i)
+            error_vector = y - (y_pred + y_pred_i)  # 计算误差向量
 
-            if self.loss == 'linear':
-                loss_vector = np.abs(error_vector)
-            elif self.loss == 'square':
-                loss_vector = error_vector ** 2
-            elif self.loss == 'exponential':
-                loss_vector = 1 - np.exp(-np.abs(error_vector))
+            if self.loss == 'linear':  # 如果是线性损失
+                loss_vector = np.abs(error_vector)  # 绝对误差
+            elif self.loss == 'square':  # 如果是平方损失
+                loss_vector = error_vector ** 2  # 平方误差
+            elif self.loss == 'exponential':  # 如果是指数损失
+                loss_vector = 1 - np.exp(-np.abs(error_vector))  # 指数误差
 
-            # 3. 计算加权平均损失
-            estimator_error = np.dot(sample_weight, loss_vector)
-            self.estimator_errors_[t] = estimator_error
-            print(f"  加权损失: {estimator_error:.4f}")
+            estimator_error = np.dot(sample_weight, loss_vector)  # 计算加权损失
+            self.estimator_errors_[t] = estimator_error  # 保存损失
+            print(f"  加权损失: {estimator_error:.4f}")  # 打印损失
 
-            # 4. 计算基学习器权重
-            if estimator_error >= 1.0:
-                print(f"  损失≥1.0，提前停止")
-                break
+            if estimator_error >= 1.0:  # 如果损失大于等于1.0
+                print(f"  损失≥1.0，提前停止")  # 打印停止信息
+                break  # 停止训练
 
             estimator_weight = self.learning_rate * np.log(
-                (1 - estimator_error) / estimator_error
+                (1 - estimator_error) / estimator_error  # 计算弱学习器权重
             )
-            self.estimator_weights_[t] = estimator_weight
-            self.estimators_.append(estimator)
+            self.estimator_weights_[t] = estimator_weight  # 保存权重
+            self.estimators_.append(estimator)  # 将学习器添加到列表
 
-            print(f"  基学习器权重: {estimator_weight:.4f}")
+            print(f"  基学习器权重: {estimator_weight:.4f}")  # 打印权重
 
-            # 5. 更新样本权重
-            sample_weight *= np.exp(estimator_weight * loss_vector)
-            sample_weight /= sample_weight.sum()
+            sample_weight *= np.exp(estimator_weight * loss_vector)  # 更新样本权重
+            sample_weight /= sample_weight.sum()  # 归一化样本权重
 
-            # 6. 更新累计预测
-            y_pred += estimator_weight * y_pred_i
+            y_pred += estimator_weight * y_pred_i  # 更新累积预测值
 
-        return self
+        return self  # 返回self以支持链式调用
 
-    def predict(self, X):
-        """预测"""
-        check_is_fitted(self)
-        X = check_array(X)
+    def predict(self, X):  # 预测方法
+        check_is_fitted(self)  # 检查模型是否已训练
+        X = check_array(X)  # 检查输入X的有效性
 
-        y_pred = np.zeros(X.shape[0])
-        for estimator, weight in zip(self.estimators_, self.estimator_weights_):
-            y_pred += weight * estimator.predict(X)
+        y_pred = np.zeros(X.shape[0])  # 初始化预测数组
+        for estimator, weight in zip(self.estimators_, self.estimator_weights_):  # 遍历所有弱学习器
+            y_pred += weight * estimator.predict(X)  # 加权累加预测结果
 
-        return y_pred
+        return y_pred  # 返回最终预测
 
-"实现梯度提升回归树（GBRT）"
 
+# ==================== 梯度提升相关类 ==================== #
 
 class LossFunction:
-    """损失函数基类"""
+    """损失函数基类"""  # 类文档字符串
 
     def __init__(self):
         pass
 
-    def __call__(self, y, pred):
-        """计算损失值"""
-        raise NotImplementedError
+    def __call__(self, y, pred):  # 计算损失
+        raise NotImplementedError  # 抽象方法，子类必须实现
 
-    def negative_gradient(self, y, pred):
-        """计算负梯度（伪残差）"""
-        raise NotImplementedError
+    def negative_gradient(self, y, pred):  # 计算负梯度（伪残差）
+        raise NotImplementedError  # 抽象方法，子类必须实现
 
-    def init_estimator(self):
-        """返回初始估计器（通常为常数）"""
-        raise NotImplementedError
+    def init_estimator(self):  # 初始化估计器
+        raise NotImplementedError  # 抽象方法，子类必须实现
 
 
 class LeastSquaresError(LossFunction):
-    """平方损失函数（用于回归）"""
+    """平方损失函数（用于回归）"""  # 类文档字符串
 
-    def __call__(self, y, pred):
-        """计算均方误差"""
-        return np.mean((y - pred) ** 2)
+    def __call__(self, y, pred):  # 计算平方损失
+        return np.mean((y - pred) ** 2)  # 均方误差
 
-    def negative_gradient(self, y, pred):
-        """负梯度 = y - pred（残差）"""
-        return y - pred
+    def negative_gradient(self, y, pred):  # 计算负梯度（残差）
+        return y - pred  # 残差 = 真实值 - 预测值
 
-    def init_estimator(self):
-        """初始预测为均值"""
-
+    def init_estimator(self):  # 初始化估计器（均值估计器）
         class MeanEstimator:
             def fit(self, y):
-                self.mean = np.mean(y)
+                self.mean = np.mean(y)  # 计算均值
                 return self
 
             def predict(self, X):
-                return np.full(X.shape[0], self.mean)
-
-        return MeanEstimator()
-
-
-class HuberLoss(LossFunction):
-    """Huber损失函数（对异常值鲁棒）"""
-
-    def __init__(self, alpha=0.9):
-        self.alpha = alpha
-        self.delta = None
-
-    def __call__(self, y, pred):
-        """计算Huber损失"""
-        diff = y - pred
-
-        if self.delta is None:
-            # 估计delta为绝对误差的中位数
-            self.delta = np.median(np.abs(diff))
-
-        mask = np.abs(diff) <= self.delta
-        loss = np.where(mask,
-                        0.5 * diff ** 2,
-                        self.delta * (np.abs(diff) - 0.5 * self.delta))
-
-        return np.mean(loss)
-
-    def negative_gradient(self, y, pred):
-        """Huber损失的负梯度"""
-        if self.delta is None:
-            self.delta = np.median(np.abs(y - pred))
-
-        diff = y - pred
-        mask = np.abs(diff) <= self.delta
-
-        # 当|diff| <= delta时，梯度为diff；否则为delta * sign(diff)
-        return np.where(mask, diff, self.delta * np.sign(diff))
-
-    def init_estimator(self):
-        """初始预测为均值"""
-
-        class MeanEstimator:
-            def fit(self, y):
-                self.mean = np.mean(y)
-                return self
-
-            def predict(self, X):
-                return np.full(X.shape[0], self.mean)
-
-        return MeanEstimator()
-
-class GradientBoostingRegressor(BaseEstimator):
-    """梯度提升回归树"""
-
-    def __init__(self,
-                 loss='ls',  # 'ls', 'lad', 'huber', 'quantile'
-                 learning_rate=0.1,
-                 n_estimators=100,
-                 subsample=1.0,
-                 criterion='friedman_mse',
-                 min_samples_split=2,
-                 min_samples_leaf=1,
-                 max_depth=3,
-                 min_impurity_decrease=0.0,
-                 init=None,
-                 random_state=None,
-                 max_features=None,
-                 alpha=0.9,  # 用于huber和quantile损失
-                 verbose=0,
-                 max_leaf_nodes=None):
-
-        self.loss = loss
-        self.learning_rate = learning_rate
-        self.n_estimators = n_estimators
-        self.subsample = subsample
-        self.criterion = criterion
-        self.min_samples_split = min_samples_split
-        self.min_samples_leaf = min_samples_leaf
-        self.max_depth = max_depth
-        self.min_impurity_decrease = min_impurity_decrease
-        self.init = init
-        self.random_state = random_state
-        self.max_features = max_features
-        self.alpha = alpha
-        self.verbose = verbose
-        self.max_leaf_nodes = max_leaf_nodes
-
-        if random_state is not None:
-            np.random.seed(random_state)
-
-        self.estimators_ = []
-        self.train_score_ = []
-        self.init_ = None
-        self.loss_ = None
-
-    def _init_state(self):
-        """初始化状态"""
-        self.estimators_ = []
-        self.train_score_ = []
-
-        # 初始化损失函数
-        if self.loss == 'ls':
-            self.loss_ = LeastSquaresError()
-        elif self.loss == 'lad':
-            self.loss_ = LeastAbsoluteError()
-        elif self.loss == 'huber':
-            self.loss_ = HuberLoss(self.alpha)
-        elif self.loss == 'quantile':
-            self.loss_ = QuantileLoss(self.alpha)
-        else:
-            raise ValueError(f"未知损失函数: {self.loss}")
-
-    def _init_constant(self, y):
-        """用常数初始化预测"""
-        self.init_ = self.loss_.init_estimator()
-        self.init_.fit(y)
-        return self.init_.predict(np.zeros(len(y)))
-
-    def fit(self, X, y, sample_weight=None):
-        """训练梯度提升模型"""
-        X, y = check_X_y(X, y)
-        n_samples, n_features = X.shape
-
-        # 初始化
-        self._init_state()
-
-        # 初始预测
-        y_pred = self._init_constant(y)
-
-        # 主循环
-        for t in range(self.n_estimators):
-            # 1. 计算负梯度（伪残差）
-            negative_gradient = self.loss_.negative_gradient(y, y_pred)
-
-            # 2. 子采样
-            if self.subsample < 1.0:
-                sample_mask = np.random.rand(n_samples) < self.subsample
-                X_subset = X[sample_mask]
-                y_subset = negative_gradient[sample_mask]
-                sample_weight_subset = (sample_weight[sample_mask]
-                                       if sample_weight is not None else None)
-            else:
-                X_subset = X
-                y_subset = negative_gradient
-                sample_weight_subset = sample_weight
-
-            # 3. 训练决策树拟合负梯度
-            tree = DecisionTreeRegressor(
-                criterion=self.criterion,
-                max_depth=self.max_depth,
-                min_samples_split=self.min_samples_split,
-                min_samples_leaf=self.min_samples_leaf,
-                max_features=self.max_features,
-                random_state=self.random_state,
-                max_leaf_nodes=self.max_leaf_nodes
-            )
-
-            tree.fit(X_subset, y_subset, sample_weight=sample_weight_subset)
-            self.estimators_.append(tree)
-
-            # 4. 更新预测
-            update = tree.predict(X)
-            y_pred += self.learning_rate * update
-
-            # 5. 记录训练分数
-            self.train_score_.append(self.loss_(y, y_pred))
-
-            if self.verbose > 0 and t % 10 == 0:
-                print(f"Iteration {t}, loss = {self.train_score_[-1]:.4f}")
-
-        return self
-
-    def predict(self, X):
-        """预测"""
-        check_is_fitted(self)
-        X = check_array(X)
-
-        # 初始预测
-        y_pred = self.init_.predict(np.zeros(X.shape[0]))
-
-        # 累加树预测
-        for tree in self.estimators_:
-            y_pred += self.learning_rate * tree.predict(X)
-
-        return y_pred
-
-    def staged_predict(self, X):
-        """按阶段预测"""
-        check_is_fitted(self)
-        X = check_array(X)
-
-        # 初始预测
-        y_pred = self.init_.predict(np.zeros(X.shape[0]))
-
-        yield y_pred.copy()
-
-        # 逐步添加树
-        for tree in self.estimators_:
-            y_pred += self.learning_rate * tree.predict(X)
-            yield y_pred.copy()
-class LossFunction:
-    """损失函数基类"""
-
-    def __init__(self):
-        pass
-
-    def __call__(self, y, pred):
-        """计算损失值"""
-        raise NotImplementedError
-
-    def negative_gradient(self, y, pred):
-        """计算负梯度"""
-        raise NotImplementedError
-
-    def init_estimator(self):
-        """返回初始估计器"""
-        raise NotImplementedError
-
-
-class LeastSquaresError(LossFunction):
-    """平方损失"""
-
-    def __call__(self, y, pred):
-        return np.mean((y - pred) ** 2)
-
-    def negative_gradient(self, y, pred):
-        return y - pred
-
-    def init_estimator(self):
-        class MeanEstimator:
-            def fit(self, y):
-                self.mean = np.mean(y)
-
-            def predict(self, X):
-                return np.full(X.shape[0], self.mean)
-
+                return np.full(X.shape[0], self.mean)  # 返回均值作为预测
         return MeanEstimator()
 
 
 class LeastAbsoluteError(LossFunction):
-    """绝对损失"""
+    """绝对损失（用于回归）"""  # 类文档字符串
 
-    def __call__(self, y, pred):
-        return np.mean(np.abs(y - pred))
+    def __call__(self, y, pred):  # 计算绝对损失
+        return np.mean(np.abs(y - pred))  # 平均绝对误差
 
-    def negative_gradient(self, y, pred):
-        return np.sign(y - pred)
+    def negative_gradient(self, y, pred):  # 计算负梯度（符号函数）
+        return np.sign(y - pred)  # 符号函数
 
-    def init_estimator(self):
+    def init_estimator(self):  # 初始化估计器（中位数估计器）
         class MedianEstimator:
             def fit(self, y):
-                self.median = np.median(y)
+                self.median = np.median(y)  # 计算中位数
+                return self
 
             def predict(self, X):
-                return np.full(X.shape[0], self.median)
-
+                return np.full(X.shape[0], self.median)  # 返回中位数作为预测
         return MedianEstimator()
 
 
 class HuberLoss(LossFunction):
-    """Huber损失"""
+    """Huber损失函数（对异常值鲁棒）"""  # 类文档字符串
 
     def __init__(self, alpha=0.9):
-        self.alpha = alpha
-        self.delta = None
+        self.alpha = alpha  # 参数alpha
+        self.delta = None  # 阈值delta，初始为None
 
-    def __call__(self, y, pred):
-        diff = y - pred
-        if self.delta is None:
-            # 估计delta为绝对误差的中位数
-            self.delta = np.median(np.abs(diff))
+    def __call__(self, y, pred):  # 计算Huber损失
+        diff = y - pred  # 计算残差
 
-        mask = np.abs(diff) <= self.delta
+        if self.delta is None:  # 如果delta未初始化
+            self.delta = np.median(np.abs(diff))  # 使用残差绝对值的中位数初始化delta
+
+        mask = np.abs(diff) <= self.delta  # 创建掩码：绝对残差小于等于delta的样本
         loss = np.where(mask,
-                       0.5 * diff ** 2,
-                       self.delta * (np.abs(diff) - 0.5 * self.delta))
+                        0.5 * diff ** 2,  # 平方损失区域
+                        self.delta * (np.abs(diff) - 0.5 * self.delta))  # 线性损失区域
 
-        return np.mean(loss)
+        return np.mean(loss)  # 返回平均损失
 
-    def negative_gradient(self, y, pred):
-        if self.delta is None:
-            self.delta = np.median(np.abs(y - pred))
+    def negative_gradient(self, y, pred):  # 计算负梯度
+        if self.delta is None:  # 如果delta未初始化
+            self.delta = np.median(np.abs(y - pred))  # 初始化delta
 
-        diff = y - pred
-        mask = np.abs(diff) <= self.delta
+        diff = y - pred  # 计算残差
+        mask = np.abs(diff) <= self.delta  # 创建掩码
 
-        return np.where(mask, diff, self.delta * np.sign(diff))
+        return np.where(mask, diff, self.delta * np.sign(diff))  # 根据区域返回梯度
 
-    def init_estimator(self):
+    def init_estimator(self):  # 初始化估计器（均值估计器）
         class MeanEstimator:
             def fit(self, y):
-                self.mean = np.mean(y)
+                self.mean = np.mean(y)  # 计算均值
+                return self
 
             def predict(self, X):
-                return np.full(X.shape[0], self.mean)
-
+                return np.full(X.shape[0], self.mean)  # 返回均值作为预测
         return MeanEstimator()
 
-class GradientBoostingClassifier(BaseEstimator, ClassifierMixin):
-    """梯度提升分类树"""
+
+class QuantileLoss(LossFunction):
+    """分位数损失（用于分位数回归）"""  # 类文档字符串
+
+    def __init__(self, alpha=0.5):
+        self.alpha = alpha  # 分位数，默认中位数
+
+    def __call__(self, y, pred):  # 计算分位数损失
+        error = y - pred  # 计算残差
+        loss = np.where(error > 0,
+                        self.alpha * error,  # 正残差的损失
+                        (self.alpha - 1) * error)  # 负残差的损失
+        return np.mean(loss)  # 返回平均损失
+
+    def negative_gradient(self, y, pred):  # 计算负梯度
+        error = y - pred  # 计算残差
+        return np.where(error > 0, self.alpha, self.alpha - 1)  # 返回梯度
+
+    def init_estimator(self):  # 初始化估计器（分位数估计器）
+        class QuantileEstimator:
+            def __init__(self, alpha=0.5):
+                self.alpha = alpha
+
+            def fit(self, y):
+                self.quantile = np.percentile(y, self.alpha * 100)  # 计算分位数
+                return self
+
+            def predict(self, X):
+                return np.full(X.shape[0], self.quantile)  # 返回分位数作为预测
+        return QuantileEstimator(self.alpha)
+
+
+class GradientBoostingRegressor(BaseEstimator, RegressorMixin):
+    """梯度提升回归树（优化版本）"""  # 类文档字符串
 
     def __init__(self,
-                 loss='deviance',  # 'deviance', 'exponential'
-                 learning_rate=0.1,
-                 n_estimators=100,
-                 subsample=1.0,
-                 criterion='friedman_mse',
-                 min_samples_split=2,
-                 min_samples_leaf=1,
-                 max_depth=3,
-                 init=None,
-                 random_state=None,
-                 max_features=None,
-                 verbose=0):
+                 loss='ls',  # 损失函数类型：'ls'(平方), 'lad'(绝对), 'huber', 'quantile'
+                 learning_rate=0.1,  # 学习率
+                 n_estimators=100,  # 弱学习器数量
+                 max_depth=3,  # 决策树最大深度
+                 min_samples_split=2,  # 内部节点再划分所需最小样本数
+                 min_samples_leaf=1,  # 叶节点最小样本数
+                 subsample=1.0,  # 子采样比例
+                 max_features=None,  # 最大特征数
+                 random_state=None,  # 随机种子
+                 verbose=0,  # 日志详细程度
+                 alpha=0.9):  # Huber损失和Quantile损失的参数
 
         self.loss = loss
         self.learning_rate = learning_rate
         self.n_estimators = n_estimators
-        self.subsample = subsample
-        self.criterion = criterion
+        self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
-        self.max_depth = max_depth
-        self.init = init
-        self.random_state = random_state
+        self.subsample = subsample
         self.max_features = max_features
+        self.random_state = random_state
         self.verbose = verbose
+        self.alpha = alpha
 
-        if random_state is not None:
-            np.random.seed(random_state)
+        if random_state is not None:  # 如果指定了随机种子
+            np.random.seed(random_state)  # 设置numpy随机种子
 
-        self.estimators_ = []
-        self.train_score_ = []
-        self.init_ = None
-        self.classes_ = None
-        self.n_classes_ = None
+        self.estimators_ = []  # 存储训练好的弱学习器列表
+        self.train_score_ = []  # 存储训练过程中的损失值
+        self.init_ = None  # 初始化估计器
+        self.loss_ = None  # 损失函数对象
 
-    def fit(self, X, y, sample_weight=None):
-        """训练梯度提升分类器"""
-        X, y = check_X_y(X, y)
-
-        # 获取类别信息
-        self.classes_ = np.unique(y)
-        self.n_classes_ = len(self.classes_)
-
-        if self.n_classes_ == 2:
-            # 二分类
-            y = np.where(y == self.classes_[0], 0, 1)
-            self._fit_binary(X, y, sample_weight)
+    def _init_loss(self):  # 初始化损失函数
+        """初始化损失函数"""
+        if self.loss == 'ls':  # 如果是平方损失
+            self.loss_ = LeastSquaresError()
+        elif self.loss == 'lad':  # 如果是绝对损失
+            self.loss_ = LeastAbsoluteError()
+        elif self.loss == 'huber':  # 如果是Huber损失
+            self.loss_ = HuberLoss(self.alpha)
+        elif self.loss == 'quantile':  # 如果是分位数损失
+            self.loss_ = QuantileLoss(self.alpha)
         else:
-            # 多分类：使用One-vs-All
-            self._fit_multiclass(X, y, sample_weight)
+            raise ValueError(f"不支持的损失函数: {self.loss}")
 
-        return self
+    def _init_constant(self, y):  # 用常数初始化预测
+        """用常数初始化预测"""
+        self.init_ = self.loss_.init_estimator()  # 获取初始化估计器
+        self.init_.fit(y)  # 拟合初始化估计器
+        return self.init_.predict(np.zeros(len(y)))  # 返回初始预测
 
-    def _fit_binary(self, X, y, sample_weight):
-        """训练二分类模型"""
-        n_samples = X.shape[0]
+    def fit(self, X, y, sample_weight=None):  # 训练梯度提升模型
+        """训练梯度提升模型"""
+        X, y = check_X_y(X, y)  # 检查输入数据
+        n_samples, n_features = X.shape  # 获取数据形状
 
-        # 初始化损失函数
-        if self.loss == 'deviance':
-            self.loss_ = BinomialDeviance()
-        elif self.loss == 'exponential':
-            self.loss_ = ExponentialLoss()
-        else:
-            raise ValueError(f"未知损失函数: {self.loss}")
+        if self.verbose > 0:  # 如果启用了详细输出
+            print("=" * 60)
+            print("开始训练梯度提升回归树")
+            print("=" * 60)
+            print(f"样本数: {n_samples}, 特征数: {n_features}")
+            print(f"参数: loss={self.loss}, learning_rate={self.learning_rate}")
+            print(f"      n_estimators={self.n_estimators}, max_depth={self.max_depth}")
 
-        # 初始预测（对数几率）
-        self.init_ = self.loss_.init_estimator()
-        self.init_.fit(y)
-        y_pred = self.init_.predict(np.zeros(n_samples))
+        self._init_loss()  # 初始化损失函数
 
-        # 主循环
-        self.estimators_ = []
-        self.train_score_ = []
+        y_pred = self._init_constant(y)  # 获取初始预测
 
-        for t in range(self.n_estimators):
-            # 1. 计算负梯度
-            negative_gradient = self.loss_.negative_gradient(y, y_pred)
+        if self.verbose > 0 and hasattr(self.init_, 'mean'):  # 如果启用了详细输出且初始化器有mean属性
+            print(f"初始预测（常数）: {self.init_.mean:.4f}")
 
-            # 2. 子采样
-            if self.subsample < 1.0:
-                sample_mask = np.random.rand(n_samples) < self.subsample
-                X_subset = X[sample_mask]
-                y_subset = negative_gradient[sample_mask]
+        self.estimators_ = []  # 重置弱学习器列表
+        self.train_score_ = []  # 重置训练损失列表
+
+        initial_loss = self.loss_(y, y_pred)  # 计算初始损失
+        self.train_score_.append(initial_loss)  # 保存初始损失
+
+        if self.verbose > 0:  # 如果启用了详细输出
+            print(f"初始损失: {initial_loss:.4f}")
+
+        for t in range(self.n_estimators):  # 遍历每个弱学习器
+            negative_gradient = self.loss_.negative_gradient(y, y_pred)  # 计算负梯度（伪残差）
+
+            if self.subsample < 1.0:  # 如果使用了子采样
+                sample_mask = np.random.rand(n_samples) < self.subsample  # 创建采样掩码
+                X_subset = X[sample_mask]  # 子采样特征
+                y_subset = negative_gradient[sample_mask]  # 子采样梯度
                 sample_weight_subset = (sample_weight[sample_mask]
-                                       if sample_weight is not None else None)
-            else:
+                                       if sample_weight is not None else None)  # 子采样权重
+            else:  # 如果不使用子采样
                 X_subset = X
                 y_subset = negative_gradient
                 sample_weight_subset = sample_weight
 
-            # 3. 训练决策树拟合负梯度
-            tree = DecisionTreeRegressor(
-                criterion=self.criterion,
+            tree = DecisionTreeRegressor(  # 创建决策树回归器
                 max_depth=self.max_depth,
                 min_samples_split=self.min_samples_split,
                 min_samples_leaf=self.min_samples_leaf,
@@ -797,261 +532,347 @@ class GradientBoostingClassifier(BaseEstimator, ClassifierMixin):
                 random_state=self.random_state
             )
 
-            tree.fit(X_subset, y_subset, sample_weight=sample_weight_subset)
-            self.estimators_.append(tree)
+            tree.fit(X_subset, y_subset, sample_weight=sample_weight_subset)  # 训练决策树拟合负梯度
+            self.estimators_.append(tree)  # 保存决策树
 
-            # 4. 更新预测
-            update = tree.predict(X)
-            y_pred += self.learning_rate * update
+            update = tree.predict(X)  # 获取决策树预测
+            y_pred += self.learning_rate * update  # 更新累积预测值
 
-            # 5. 记录训练损失
-            self.train_score_.append(self.loss_(y, y_pred))
+            current_loss = self.loss_(y, y_pred)  # 计算当前损失
+            self.train_score_.append(current_loss)  # 保存当前损失
 
-            if self.verbose > 0 and t % 10 == 0:
-                print(f"Iteration {t}, loss = {self.train_score_[-1]:.4f}")
+            if self.verbose > 0 and t % 10 == 0:  # 如果启用了详细输出且每10轮输出一次
+                print(f"轮次 {t + 1:3d}/{self.n_estimators}: 损失 = {current_loss:.4f}")
 
-    def _fit_multiclass(self, X, y, sample_weight):
-        """训练多分类模型"""
-        n_samples = X.shape[0]
+        if self.verbose > 0:  # 如果启用了详细输出
+            print(f"训练完成，最终损失: {current_loss:.4f}")
 
-        # 转换为one-hot编码
-        y_onehot = np.eye(self.n_classes_)[y]
+        return self  # 返回self以支持链式调用
 
-        # 初始化损失函数（多项偏差）
-        self.loss_ = MultinomialDeviance(self.n_classes_)
+    def predict(self, X):  # 预测方法
+        """预测"""
+        check_is_fitted(self)  # 检查模型是否已训练
+        X = check_array(X)  # 检查输入数据
 
-        # 初始预测
-        self.init_ = self.loss_.init_estimator()
-        self.init_.fit(y_onehot)
-        y_pred = self.init_.predict(np.zeros((n_samples, 1)))
+        y_pred = self.init_.predict(np.zeros(X.shape[0]))  # 获取初始预测
 
-        # 为每个类别维护一个提升模型
-        self.estimators_ = [[] for _ in range(self.n_classes_)]
+        for tree in self.estimators_:  # 遍历所有弱学习器
+            y_pred += self.learning_rate * tree.predict(X)  # 加权累加预测结果
 
-        # 主循环
-        self.train_score_ = []
+        return y_pred  # 返回最终预测
 
-        for t in range(self.n_estimators):
-            for k in range(self.n_classes_):
-                # 计算第k类的负梯度
-                negative_gradient = self.loss_.negative_gradient(
-                    y_onehot[:, k], y_pred[:, k], k
-                )
+    def staged_predict(self, X):  # 阶段预测生成器
+        """按阶段预测"""
+        check_is_fitted(self)  # 检查模型是否已训练
+        X = check_array(X)  # 检查输入数据
 
-                # 子采样
-                if self.subsample < 1.0:
-                    sample_mask = np.random.rand(n_samples) < self.subsample
-                    X_subset = X[sample_mask]
-                    y_subset = negative_gradient[sample_mask]
-                else:
-                    X_subset = X
-                    y_subset = negative_gradient
+        y_pred = self.init_.predict(np.zeros(X.shape[0]))  # 获取初始预测
 
-                # 训练决策树
-                tree = DecisionTreeRegressor(
-                    criterion=self.criterion,
-                    max_depth=self.max_depth,
-                    min_samples_split=self.min_samples_split,
-                    min_samples_leaf=self.min_samples_leaf,
-                    max_features=self.max_features,
-                    random_state=self.random_state
-                )
+        yield y_pred.copy()  # 生成初始预测
 
-                tree.fit(X_subset, y_subset)
-                self.estimators_[k].append(tree)
+        for tree in self.estimators_:  # 遍历所有弱学习器
+            y_pred += self.learning_rate * tree.predict(X)  # 更新预测
+            yield y_pred.copy()  # 生成当前阶段预测
 
-                # 更新预测
-                update = tree.predict(X)
-                y_pred[:, k] += self.learning_rate * update
 
-            # 记录训练损失
-            self.train_score_.append(self.loss_(y_onehot, y_pred))
-
-            if self.verbose > 0 and t % 10 == 0:
-                print(f"Iteration {t}, loss = {self.train_score_[-1]:.4f}")
-
-    def predict(self, X):
-        """预测类别"""
-        check_is_fitted(self)
-        X = check_array(X)
-
-        if self.n_classes_ == 2:
-            # 二分类
-            proba = self.predict_proba(X)
-            return np.where(proba[:, 1] > 0.5, self.classes_[1], self.classes_[0])
-        else:
-            # 多分类
-            proba = self.predict_proba(X)
-            return self.classes_[np.argmax(proba, axis=1)]
-
-    def predict_proba(self, X):
-        """预测概率"""
-        check_is_fitted(self)
-        X = check_array(X)
-
-        if self.n_classes_ == 2:
-            # 二分类：使用sigmoid函数
-            raw_pred = self._raw_predict(X)
-            proba = 1.0 / (1.0 + np.exp(-raw_pred))
-            return np.column_stack([1 - proba, proba])
-        else:
-            # 多分类：使用softmax
-            raw_pred = self._raw_predict(X)
-            exp_pred = np.exp(raw_pred - np.max(raw_pred, axis=1, keepdims=True))
-            return exp_pred / np.sum(exp_pred, axis=1, keepdims=True)
-
-    def _raw_predict(self, X):
-        """原始预测（对数几率）"""
-        n_samples = X.shape[0]
-
-        if self.n_classes_ == 2:
-            # 二分类
-            raw_pred = self.init_.predict(np.zeros(n_samples))
-            for tree in self.estimators_:
-                raw_pred += self.learning_rate * tree.predict(X)
-            return raw_pred
-        else:
-            # 多分类
-            raw_pred = np.zeros((n_samples, self.n_classes_))
-            for k in range(self.n_classes_):
-                raw_pred[:, k] = self.init_.predict(np.zeros(n_samples))
-                for tree in self.estimators_[k]:
-                    raw_pred[:, k] += self.learning_rate * tree.predict(X)
-            return raw_pred
-
-    def staged_predict_proba(self, X):
-        """按阶段预测概率"""
-        check_is_fitted(self)
-        X = check_array(X)
-
-        n_samples = X.shape[0]
-
-        if self.n_classes_ == 2:
-            # 二分类
-            raw_pred = self.init_.predict(np.zeros(n_samples))
-            yield self._sigmoid_proba(raw_pred)
-
-            for tree in self.estimators_:
-                raw_pred += self.learning_rate * tree.predict(X)
-                yield self._sigmoid_proba(raw_pred)
-        else:
-            # 多分类
-            raw_pred = np.zeros((n_samples, self.n_classes_))
-            for k in range(self.n_classes_):
-                raw_pred[:, k] = self.init_.predict(np.zeros(n_samples))
-
-            yield self._softmax_proba(raw_pred)
-
-            for t in range(len(self.estimators_[0])):
-                for k in range(self.n_classes_):
-                    raw_pred[:, k] += (self.learning_rate *
-                                     self.estimators_[k][t].predict(X))
-                yield self._softmax_proba(raw_pred)
-
-    def _sigmoid_proba(self, raw_pred):
-        """sigmoid转换"""
-        proba = 1.0 / (1.0 + np.exp(-raw_pred))
-        return np.column_stack([1 - proba, proba])
-
-    def _softmax_proba(self, raw_pred):
-        """softmax转换"""
-        exp_pred = np.exp(raw_pred - np.max(raw_pred, axis=1, keepdims=True))
-        return exp_pred / np.sum(exp_pred, axis=1, keepdims=True)
-
-    def score(self, X, y):
-        """计算准确率"""
-        y_pred = self.predict(X)
-        return np.mean(y_pred == y)
+# ==================== 分类损失函数 ==================== #
 
 class BinomialDeviance(LossFunction):
-    """二项偏差损失（对数似然损失）"""
+    """二项偏差损失（对数似然损失，用于二分类）"""  # 类文档字符串
 
-    def __call__(self, y, pred):
-        # pred是对数几率
-        return np.mean(np.log(1 + np.exp(-(2*y - 1) * pred)))
+    def __call__(self, y, pred):  # 计算二项偏差损失
+        # y ∈ {0, 1}, pred是对数几率
+        pred = np.clip(pred, -500, 500)  # 裁剪预测值避免数值溢出
+        return np.mean(np.log(1 + np.exp(-(2 * y - 1) * pred)))  # 对数似然损失
 
-    def negative_gradient(self, y, pred):
-        # 负梯度 = y - σ(pred)
-        prob = 1.0 / (1.0 + np.exp(-pred))
-        return y - prob
+    def negative_gradient(self, y, pred):  # 计算负梯度
+        # 负梯度 = y - σ(pred)，其中σ是sigmoid函数
+        prob = 1.0 / (1.0 + np.exp(-pred))  # 计算概率
+        return y - prob  # 计算残差
 
-    def init_estimator(self):
+    def init_estimator(self):  # 初始化估计器（对数几率估计器）
         class LogOddsEstimator:
             def fit(self, y):
-                # 初始化为对数几率
-                pos = np.mean(y)
-                if pos <= 0 or pos >= 1:
-                    pos = np.clip(pos, 1e-10, 1 - 1e-10)
-                self.prior = np.log(pos / (1 - pos))
+                pos = np.mean(y)  # 计算正类比例
+                if pos <= 0 or pos >= 1:  # 如果比例在边界上
+                    pos = np.clip(pos, 1e-10, 1 - 1e-10)  # 裁剪避免数值问题
+                self.prior = np.log(pos / (1 - pos))  # 计算先验对数几率
+                return self
 
             def predict(self, X):
-                return np.full(X.shape[0], self.prior)
-
+                return np.full(X.shape[0], self.prior)  # 返回先验对数几率
         return LogOddsEstimator()
 
 
 class ExponentialLoss(LossFunction):
-    """指数损失（AdaBoost损失）"""
+    """指数损失（AdaBoost损失）"""  # 类文档字符串
 
-    def __call__(self, y, pred):
+    def __call__(self, y, pred):  # 计算指数损失
         # 假设y ∈ {0, 1}，转换为{-1, 1}
-        y_transformed = 2 * y - 1
-        return np.mean(np.exp(-y_transformed * pred))
+        y_transformed = 2 * y - 1  # 转换标签
+        return np.mean(np.exp(-y_transformed * pred))  # 指数损失
 
-    def negative_gradient(self, y, pred):
-        y_transformed = 2 * y - 1
-        return y_transformed * np.exp(-y_transformed * pred)
+    def negative_gradient(self, y, pred):  # 计算负梯度
+        y_transformed = 2 * y - 1  # 转换标签
+        return y_transformed * np.exp(-y_transformed * pred)  # 梯度
 
-    def init_estimator(self):
+    def init_estimator(self):  # 初始化估计器（零估计器）
         class ZeroEstimator:
             def fit(self, y):
-                self.constant = 0.0
+                self.constant = 0.0  # 常数0
+                return self
 
             def predict(self, X):
-                return np.full(X.shape[0], self.constant)
-
+                return np.full(X.shape[0], self.constant)  # 返回0
         return ZeroEstimator()
 
 
 class MultinomialDeviance(LossFunction):
-    """多项偏差损失（多分类对数似然）"""
+    """多项偏差损失（多分类对数似然）"""  # 类文档字符串
 
     def __init__(self, n_classes):
-        self.n_classes = n_classes
+        self.n_classes = n_classes  # 类别数
 
-    def __call__(self, y, pred):
+    def __call__(self, y, pred):  # 计算多项偏差损失
         # y: one-hot编码, pred: 每个类别的对数几率
-        # 计算softmax概率
-        exp_pred = np.exp(pred - np.max(pred, axis=1, keepdims=True))
-        prob = exp_pred / np.sum(exp_pred, axis=1, keepdims=True)
+        pred = np.clip(pred, -500, 500)  # 裁剪预测值避免数值溢出
+        exp_pred = np.exp(pred - np.max(pred, axis=1, keepdims=True))  # 数值稳定的指数计算
+        prob = exp_pred / np.sum(exp_pred, axis=1, keepdims=True)  # softmax概率
 
-        # 对数似然损失
-        log_likelihood = np.sum(y * np.log(prob + 1e-15))
-        return -log_likelihood / len(y)
+        log_likelihood = np.sum(y * np.log(prob + 1e-15))  # 对数似然
+        return -log_likelihood / len(y)  # 负对数似然（损失）
 
-    def negative_gradient(self, y, pred, k=None):
-        # 对于多分类，每个类别单独计算
-        if k is not None:
-            # 计算第k类的负梯度
-            exp_pred = np.exp(pred - np.max(pred, axis=1, keepdims=True))
-            prob = exp_pred / np.sum(exp_pred, axis=1, keepdims=True)
-            return y - prob
-        else:
-            # 返回所有类别的负梯度
-            exp_pred = np.exp(pred - np.max(pred, axis=1, keepdims=True))
-            prob = exp_pred / np.sum(exp_pred, axis=1, keepdims=True)
-            return y - prob
+    def negative_gradient(self, y, pred, k=None):  # 计算负梯度
+        if k is not None:  # 如果指定了类别k
+            pred = np.clip(pred, -500, 500)  # 裁剪预测值
+            exp_pred = np.exp(pred - np.max(pred, axis=1, keepdims=True))  # 数值稳定的指数计算
+            prob = exp_pred / np.sum(exp_pred, axis=1, keepdims=True)  # softmax概率
+            return y[:, k] - prob[:, k]  # 类别k的梯度
+        else:  # 如果未指定类别
+            pred = np.clip(pred, -500, 500)  # 裁剪预测值
+            exp_pred = np.exp(pred - np.max(pred, axis=1, keepdims=True))  # 数值稳定的指数计算
+            prob = exp_pred / np.sum(exp_pred, axis=1, keepdims=True)  # softmax概率
+            return y - prob  # 所有类别的梯度
 
-    def init_estimator(self):
+    def init_estimator(self):  # 初始化估计器（零估计器）
         class ZeroEstimator:
             def fit(self, y):
-                # 多分类初始化为0
-                self.constant = 0.0
+                self.constant = 0.0  # 常数0
+                return self
 
             def predict(self, X):
-                if len(X.shape) == 1:
-                    return np.full(X.shape[0], self.constant)
-                else:
-                    return np.full((X.shape[0], 1), self.constant)
-
+                if len(X.shape) == 1:  # 如果X是一维的
+                    return np.full(X.shape[0], self.constant)  # 返回一维数组
+                else:  # 如果X是二维的
+                    return np.full((X.shape[0], 1), self.constant)  # 返回二维数组
         return ZeroEstimator()
+
+
+class GradientBoostingClassifier(BaseEstimator, ClassifierMixin):
+    """梯度提升分类树"""  # 类文档字符串
+
+    def __init__(self,
+                 loss='deviance',  # 损失函数：'deviance'(偏差), 'exponential'(指数)
+                 learning_rate=0.1,  # 学习率
+                 n_estimators=100,  # 弱学习器数量
+                 max_depth=3,  # 决策树最大深度
+                 min_samples_split=2,  # 内部节点再划分所需最小样本数
+                 min_samples_leaf=1,  # 叶节点最小样本数
+                 subsample=1.0,  # 子采样比例
+                 max_features=None,  # 最大特征数
+                 random_state=None,  # 随机种子
+                 verbose=0):  # 日志详细程度
+
+        self.loss = loss
+        self.learning_rate = learning_rate
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_samples_leaf = min_samples_leaf
+        self.subsample = subsample
+        self.max_features = max_features
+        self.random_state = random_state
+        self.verbose = verbose
+
+        if random_state is not None:  # 如果指定了随机种子
+            np.random.seed(random_state)  # 设置numpy随机种子
+
+        self.estimators_ = []  # 存储训练好的弱学习器列表
+        self.train_score_ = []  # 存储训练过程中的损失值
+        self.init_ = None  # 初始化估计器
+        self.classes_ = None  # 类别标签
+        self.n_classes_ = None  # 类别数量
+
+    def _init_loss(self, n_classes):  # 初始化损失函数
+        """初始化损失函数"""
+        if self.loss == 'deviance':  # 如果是偏差损失
+            if n_classes == 2:  # 如果是二分类
+                self.loss_ = BinomialDeviance()  # 使用二项偏差损失
+            else:  # 如果是多分类
+                self.loss_ = MultinomialDeviance(n_classes)  # 使用多项偏差损失
+        elif self.loss == 'exponential':  # 如果是指数损失
+            if n_classes == 2:  # 如果是二分类
+                class ExponentialLossWrapper:  # 包装器类
+                    def negative_gradient(self, y, pred):
+                        y_transformed = 2 * y - 1  # 转换标签
+                        return 2 * y_transformed * np.exp(-2 * y_transformed * pred)  # 梯度
+
+                    def init_estimator(self):
+                        class ZeroEstimator:
+                            def fit(self, y):
+                                self.constant = 0.0
+                                return self
+
+                            def predict(self, X):
+                                return np.full(X.shape[0], self.constant)
+                        return ZeroEstimator()
+                self.loss_ = ExponentialLossWrapper()  # 使用指数损失包装器
+            else:
+                raise ValueError("指数损失仅支持二分类")  # 多分类不支持指数损失
+        else:
+            raise ValueError(f"不支持的损失函数: {self.loss}")
+
+    def fit(self, X, y, sample_weight=None):  # 训练梯度提升分类器
+        """训练梯度提升分类器"""
+        X, y = check_X_y(X, y)  # 检查输入数据
+
+        self.classes_ = np.unique(y)  # 获取类别标签
+        self.n_classes_ = len(self.classes_)  # 获取类别数量
+
+        if self.verbose > 0:  # 如果启用了详细输出
+            print("=" * 60)
+            print("开始训练梯度提升分类器")
+            print("=" * 60)
+            print(f"样本数: {X.shape[0]}, 特征数: {X.shape[1]}")
+            print(f"类别数: {self.n_classes_}, 类别: {self.classes_}")
+            print(f"参数: loss={self.loss}, learning_rate={self.learning_rate}")
+
+        if self.n_classes_ == 2:  # 如果是二分类
+            y_coded = np.where(y == self.classes_[0], 0, 1)  # 编码为0和1
+            self._fit_binary(X, y_coded, sample_weight)  # 训练二分类模型
+        else:  # 如果是多分类
+            y_onehot = np.eye(self.n_classes_)[y]  # one-hot编码
+            self._fit_multiclass(X, y_onehot, sample_weight)  # 训练多分类模型
+
+        return self  # 返回self以支持链式调用
+
+    def _fit_binary(self, X, y, sample_weight):  # 训练二分类模型
+        """训练二分类模型"""
+        n_samples = X.shape[0]  # 获取样本数
+
+        self._init_loss(2)  # 初始化损失函数（二分类）
+
+        self.init_ = self.loss_.init_estimator()  # 获取初始化估计器
+        self.init_.fit(y)  # 拟合初始化估计器
+        y_pred = self.init_.predict(np.zeros((n_samples, 1))).flatten()  # 获取初始预测
+
+        if self.verbose > 0 and hasattr(self.init_, 'prior'):  # 如果启用了详细输出且初始化器有prior属性
+            print(f"初始先验概率: {1/(1+np.exp(-2*self.init_.prior)):.4f}")  # 打印先验概率
+
+        self.estimators_ = []  # 重置弱学习器列表
+        self.train_score_ = []  # 重置训练损失列表
+
+        for t in range(self.n_estimators):  # 遍历每个弱学习器
+            negative_gradient = self.loss_.negative_gradient(y, y_pred)  # 计算负梯度
+
+            if self.subsample < 1.0:  # 如果使用了子采样
+                subsample_mask = np.random.rand(n_samples) < self.subsample  # 创建采样掩码
+                X_subset = X[subsample_mask]  # 子采样特征
+                y_subset = negative_gradient[subsample_mask]  # 子采样梯度
+                sample_weight_subset = None  # 不使用样本权重
+            else:  # 如果不使用子采样
+                X_subset = X
+                y_subset = negative_gradient
+                sample_weight_subset = sample_weight
+
+            tree = DecisionTreeRegressor(  # 创建决策树回归器
+                max_depth=self.max_depth,
+                min_samples_split=self.min_samples_split,
+                min_samples_leaf=self.min_samples_leaf,
+                max_features=self.max_features,
+                random_state=self.random_state
+            )
+
+            tree.fit(X_subset, y_subset, sample_weight=sample_weight_subset)  # 训练决策树拟合负梯度
+            self.estimators_.append(tree)  # 保存决策树
+
+            update = tree.predict(X)  # 获取决策树预测
+            y_pred += self.learning_rate * update  # 更新累积预测值
+
+            if self.loss == 'deviance':  # 如果是偏差损失
+                current_loss = np.mean(np.log(1 + np.exp(-2 * y * y_pred)))  # 计算偏差损失
+            else:  # 如果是指数损失
+                current_loss = np.mean(np.exp(-y * y_pred))  # 计算指数损失
+
+            self.train_score_.append(current_loss)  # 保存当前损失
+
+            if self.verbose > 0 and t % 10 == 0:  # 如果启用了详细输出且每10轮输出一次
+                print(f"轮次 {t+1:3d}/{self.n_estimators}: 损失 = {current_loss:.4f}")
+
+        if self.verbose > 0:  # 如果启用了详细输出
+            print(f"训练完成，最终损失: {current_loss:.4f}")
+
+    def predict(self, X):  # 预测类别
+        """预测类别"""
+        check_is_fitted(self)  # 检查模型是否已训练
+        X = check_array(X)  # 检查输入数据
+
+        if self.n_classes_ == 2:  # 如果是二分类
+            proba = self.predict_proba(X)  # 获取预测概率
+            return np.where(proba[:, 1] > 0.5, self.classes_[1], self.classes_[0])  # 根据概率阈值预测类别
+        else:  # 如果是多分类
+            proba = self.predict_proba(X)  # 获取预测概率
+            return self.classes_[np.argmax(proba, axis=1)]  # 返回概率最大的类别
+
+    def predict_proba(self, X):  # 预测概率
+        """预测概率"""
+        check_is_fitted(self)  # 检查模型是否已训练
+        X = check_array(X)  # 检查输入数据
+
+        if self.n_classes_ == 2:  # 如果是二分类
+            raw_pred = self._raw_predict(X)  # 获取原始预测（对数几率）
+            proba = 1.0 / (1.0 + np.exp(-raw_pred))  # sigmoid函数转换概率
+            return np.column_stack([1 - proba, proba])  # 返回两类概率
+        else:  # 如果是多分类
+            raw_pred = self._raw_predict(X)  # 获取原始预测（对数几率）
+            exp_pred = np.exp(raw_pred - np.max(raw_pred, axis=1, keepdims=True))  # 数值稳定的指数计算
+            return exp_pred / np.sum(exp_pred, axis=1, keepdims=True)  # softmax转换概率
+
+    def _raw_predict(self, X):  # 原始预测（对数几率）
+        """原始预测（对数几率）"""
+        n_samples = X.shape[0]  # 获取样本数
+
+        if self.n_classes_ == 2:  # 如果是二分类
+            raw_pred = self.init_.predict(np.zeros((n_samples, 1))).flatten()  # 获取初始预测
+            for tree in self.estimators_:  # 遍历所有弱学习器
+                raw_pred += self.learning_rate * tree.predict(X)  # 累加预测结果
+            return raw_pred  # 返回原始预测
+        else:  # 如果是多分类
+            raw_pred = np.zeros((n_samples, self.n_classes_))  # 初始化原始预测矩阵
+            for k in range(self.n_classes_):  # 遍历每个类别
+                raw_pred[:, k] = self.init_.predict(np.zeros((n_samples, 1))).flatten()  # 获取初始预测
+                for tree in self.estimators_[k]:  # 遍历该类别的弱学习器
+                    raw_pred[:, k] += self.learning_rate * tree.predict(X)  # 累加预测结果
+            return raw_pred  # 返回原始预测
+
+    def score(self, X, y):  # 计算准确率
+        """计算准确率"""
+        y_pred = self.predict(X)  # 预测
+        return np.mean(y_pred == y)  # 返回准确率
+
+
+# 导出所有类
+__all__ = [
+    'AdaBoostClassifier',
+    'AdaBoostRegressor',
+    'GradientBoostingRegressor',
+    'GradientBoostingClassifier',
+    'LossFunction',
+    'LeastSquaresError',
+    'LeastAbsoluteError',
+    'HuberLoss',
+    'QuantileLoss',
+    'BinomialDeviance',
+    'ExponentialLoss',
+    'MultinomialDeviance'
+]
