@@ -12,7 +12,7 @@ from models.base1 import get_diverse_classifiers  # 导入获取多种基分类�
 from models.ensemble import VotingEnsemble, WeightedVotingEnsemble  # 导入投票集成和加权投票集成类
 
 #设置字体为系统自带的中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'KaiTi', 'FangSong']  # 设置中文字体
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']  # 设置中文字体
 # 解决负号显示问题
 plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示为方块的问题
 

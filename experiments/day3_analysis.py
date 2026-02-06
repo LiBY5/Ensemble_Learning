@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.gridspec import GridSpec
 import warnings
+import os
 
 warnings.filterwarnings('ignore')
 
@@ -50,41 +51,22 @@ class Day3ResultsAnalyzer:
         print("=" * 60)
 
         # 加载回归结果
-        regression_path = f'../results/logs/day3_regression_comparison.csv'
+        regression_path = '../results/logs/day3_regression_comparison.csv'
+        if not os.path.exists(regression_path):
+            raise FileNotFoundError(f"回归结果文件不存在: {regression_path}")
+
         self.regression_results = pd.read_csv(regression_path)
         print(f"✅ 加载回归结果: {len(self.regression_results)} 个模型")
 
         # 加载分类结果
-        classification_path = f'../results/logs/day3_classification_comparison.csv'
+        classification_path = '../results/logs/day3_classification_comparison.csv'
+        if not os.path.exists(classification_path):
+            raise FileNotFoundError(f"分类结果文件不存在: {classification_path}")
+
         self.classification_results = pd.read_csv(classification_path)
         print(f"✅ 加载分类结果: {len(self.classification_results)} 个模型")
 
         return self.regression_results, self.classification_results
-
-    def create_sample_results(self):
-        """创建示例结果（如果文件不存在）"""
-        # 基于图片中的数值创建示例数据
-        self.regression_results = pd.DataFrame({
-            'Model': ['决策树 (基线)', 'Bagging (决策树)', '随机森林',
-                      'AdaBoost (sklearn)', 'GBDT (我们的实现)', 'GBDT (sklearn)'],
-            'MSE': [3526.02, 2939.68, 2960.87, 3019.36, 2851.92, 2849.62],
-            'RMSE': [59.38, 54.22, 54.41, 54.95, 53.40, 53.38],
-            'R²': [0.3345, 0.4452, 0.4412, 0.4301, 0.4617, 0.4621],
-            'Train_Time': [0.002, 0.102, 0.102, 0.075, 0.052, 0.054],
-            'Composite_Score': [0.2000, 0.6940, 0.6684, 0.6529, 0.8983, 0.8967]
-        })
-
-        self.classification_results = pd.DataFrame({
-            'Model': ['决策树 (基线)', 'Bagging (决策树)', '随机森林',
-                      'AdaBoost (我们的实现)', 'AdaBoost (sklearn)',
-                      'GBDT (我们的实现)', 'GBDT (sklearn)'],
-            'Accuracy': [0.9211, 0.9386, 0.9561, 0.9649, 0.9561, 0.9211, 0.9474],
-            'AUC': [0.9163, 0.9914, 0.9937, None, 0.9864, 0.9623, 0.9881],
-            'CV_Mean': [0.9191, 0.9508, 0.9561, 0.9754, 0.9701, 0.9508, 0.9561],
-            'CV_Std': [0.0180, 0.0307, 0.0229, 0.0087, 0.0070, 0.0153, 0.0184],
-            'Train_Time': [0.005, 0.302, 0.095, 0.374, 0.375, 0.184, 0.331],
-            'Composite_Score': [0.2608, 0.2597, 0.6546, 0.8785, 0.7800, 0.2465, 0.5275]
-        })
 
     def analyze_regression_results(self):
         """深度分析回归结果"""
@@ -320,7 +302,12 @@ class Day3ResultsAnalyzer:
 
         plt.suptitle('第三天：集成学习方法综合实验分析报告', fontsize=20, fontweight='bold', y=0.98)
         plt.tight_layout()
-        plt.savefig(f'{self.results_dir}/figures/day3_comprehensive_analysis.png',
+
+        # 确保保存目录存在
+        save_dir = f'{self.results_dir}/figures'
+        os.makedirs(save_dir, exist_ok=True)
+
+        plt.savefig(f'{save_dir}/day3_comprehensive_analysis.png',
                     dpi=150, bbox_inches='tight')
         plt.show()
 
@@ -632,6 +619,7 @@ class Day3ResultsAnalyzer:
         self.create_comprehensive_visualization()
 
         # 生成文本报告
+        os.makedirs(self.results_dir, exist_ok=True)
         report_path = f'{self.results_dir}/day3_analysis_report.txt'
         with open(report_path, 'w', encoding='utf-8') as f:
             f.write("=" * 60 + "\n")
@@ -666,7 +654,7 @@ class Day3ResultsAnalyzer:
             f.write("• 大规模数据: 使用并行化Bagging\n")
 
         print(f"\n✅ 分析报告已保存到: {report_path}")
-        print("✅ 综合可视化已保存到: results/figures/day3_comprehensive_analysis.png")
+        print("✅ 综合可视化已保存到: ../results/figures/day3_comprehensive_analysis.png")
 
         return {
             'regression_analysis': reg_analysis,
@@ -680,10 +668,18 @@ if __name__ == "__main__":
     # 创建分析器
     analyzer = Day3ResultsAnalyzer()
 
-    # 生成完整分析报告
-    report = analyzer.generate_analysis_report()
+    try:
+        # 生成完整分析报告
+        report = analyzer.generate_analysis_report()
 
-    print("\n" + "=" * 60)
-    print("分析完成！")
-    print("=" * 60)
+        print("\n" + "=" * 60)
+        print("分析完成！")
+        print("=" * 60)
 
+    except FileNotFoundError as e:
+        print(f"\n❌ 错误: {e}")
+        print("请先运行实验代码生成结果文件")
+    except Exception as e:
+        print(f"\n❌ 分析过程中出现错误: {e}")
+        import traceback
+        traceback.print_exc()
